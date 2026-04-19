@@ -2,12 +2,10 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import hashlib
-import os
-from datetime import datetime
-from io import BytesIO
 import tempfile
+from io import BytesIO
 
-# ✅ SAFE IMPORT (IMPORTANT FIX)
+# ✅ Safe OpenCV import
 try:
     import cv2
     CV2_AVAILABLE = True
@@ -15,146 +13,145 @@ except:
     CV2_AVAILABLE = False
 
 # ─── Page Config ─────────────────────
-st.set_page_config(
-    page_title="DeepTrust",
-    page_icon="🔍",
-    layout="wide"
-)
+st.set_page_config(page_title="DeepTrust", page_icon="🔍", layout="wide")
 
-# ─── UI ─────────────────────────────
 st.title("🔍 DeepTrust")
-st.subheader("AI Deepfake Detection System")
+st.subheader("AI vs Real Media Detection")
 
-# ─── Detector Class ─────────────────
+# ─── Detector ───────────────────────
 class DeepfakeDetector:
 
-    def analyze_image(self, image_path):
+    def analyze_image(self, path):
         if not CV2_AVAILABLE:
-            return self._fallback_result("cv2 not installed")
+            return self._fallback("OpenCV not installed")
 
-        try:
-            img = cv2.imread(image_path)
+        img = cv2.imread(path)
+        if img is None:
+            return {"error": "Image load failed"}
 
-            if img is None:
-                return {"error": "Image load failed"}
+        score = self._score(img)
+        return self._build_result(score)
 
-            score = self._simple_score(img)
-
-            return self._build_result(score)
-
-        except Exception as e:
-            return {"error": str(e)}
-
-    def analyze_video(self, video_path):
+    def analyze_video(self, path):
         if not CV2_AVAILABLE:
-            return self._fallback_result("cv2 not installed")
+            return self._fallback("OpenCV not installed")
 
-        try:
-            cap = cv2.VideoCapture(video_path)
-            scores = []
+        cap = cv2.VideoCapture(path)
+        scores = []
 
-            for _ in range(10):
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                scores.append(self._simple_score(frame))
+        for _ in range(10):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            scores.append(self._score(frame))
 
-            cap.release()
+        cap.release()
 
-            if not scores:
-                return {"error": "No frames"}
+        if not scores:
+            return {"error": "No frames"}
 
-            avg_score = np.mean(scores)
-            return self._build_result(avg_score)
+        return self._build_result(np.mean(scores))
 
-        except Exception as e:
-            return {"error": str(e)}
-
-    # 🔥 SIMPLE AI LOGIC (can upgrade later)
-    def _simple_score(self, img):
+    # 🔥 Simple heuristic scoring
+    def _score(self, img):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         variance = np.var(gray)
 
-        # heuristic scoring
-        score = min(1.0, variance / 5000)
-        return score
+        # normalize score (0–1)
+        return min(1.0, variance / 5000)
 
+    # ✅ Final verdict logic
     def _build_result(self, score):
         score = int(score * 100)
 
+        if score >= 70:
+            label = "REAL"
+            emoji = "✅"
+        elif score >= 40:
+            label = "UNCERTAIN"
+            emoji = "⚠️"
+        else:
+            label = "AI GENERATED"
+            emoji = "🚨"
+
+        confidence = abs(score - 50) * 2
+
         return {
-            "trust_score": score,
-            "is_authentic": score >= 70,
-            "is_suspicious": 40 <= score < 70,
-            "is_deepfake": score < 40
+            "score": score,
+            "label": label,
+            "emoji": emoji,
+            "confidence": int(confidence)
         }
 
-    def _fallback_result(self, reason):
+    def _fallback(self, msg):
         return {
-            "trust_score": 50,
-            "is_authentic": False,
-            "is_suspicious": True,
-            "is_deepfake": False,
-            "warning": reason
+            "score": 50,
+            "label": "UNCERTAIN",
+            "emoji": "⚠️",
+            "confidence": 0,
+            "warning": msg
         }
 
 
 # ─── Utils ──────────────────────────
-def generate_hash(data):
+def file_hash(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def show_result(result):
-    score = result["trust_score"]
+def show_result(res):
+    st.markdown("## 🔍 Final Verdict")
 
-    if score >= 70:
-        st.success(f"✅ Authentic ({score})")
-    elif score >= 40:
-        st.warning(f"⚠️ Suspicious ({score})")
+    st.markdown(f"""
+    ### {res['emoji']} {res['label']}
+    **Confidence:** {res['confidence']}%  
+    **Score:** {res['score']}/100
+    """)
+
+    if res["label"] == "REAL":
+        st.success("Likely a real image/video.")
+    elif res["label"] == "AI GENERATED":
+        st.error("Likely AI-generated (deepfake).")
     else:
-        st.error(f"🚨 Deepfake ({score})")
+        st.warning("Model is not confident.")
 
-    if "warning" in result:
-        st.info(f"⚠️ {result['warning']}")
+    if "warning" in res:
+        st.info(res["warning"])
 
 
-# ─── App Logic ──────────────────────
+# ─── App ────────────────────────────
 detector = DeepfakeDetector()
 
-uploaded_file = st.file_uploader(
+uploaded = st.file_uploader(
     "Upload Image or Video",
     type=["jpg", "jpeg", "png", "mp4"]
 )
 
-if uploaded_file:
+if uploaded:
+    data = uploaded.read()
 
-    file_bytes = uploaded_file.read()
+    st.markdown("### 👀 Preview")
 
-    st.markdown("### Preview")
-
-    if uploaded_file.type.startswith("image"):
-        img = Image.open(BytesIO(file_bytes))
+    if uploaded.type.startswith("image"):
+        img = Image.open(BytesIO(data))
         st.image(img)
 
-    elif uploaded_file.type.startswith("video"):
+    else:
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file_bytes)
+            tmp.write(data)
             st.video(tmp.name)
 
-    if st.button("Analyze 🚀"):
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp:
-            tmp.write(file_bytes)
+    if st.button("🚀 Analyze"):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(data)
             path = tmp.name
 
         with st.spinner("Analyzing..."):
-            if uploaded_file.type.startswith("image"):
+            if uploaded.type.startswith("image"):
                 result = detector.analyze_image(path)
             else:
                 result = detector.analyze_video(path)
 
-        st.markdown("## Result")
         show_result(result)
 
-        st.markdown("### File Hash")
-        st.code(generate_hash(file_bytes))
+        st.markdown("### 🔐 File Hash")
+        st.code(file_hash(data))
