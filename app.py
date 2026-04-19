@@ -23,7 +23,7 @@ except:
 st.set_page_config(page_title="DeepTrust", layout="wide")
 st.title("🔍 DeepTrust - Deepfake Detector")
 
-# ─── Detector Class ───
+# ─── Detector ───
 class DeepfakeDetector:
 
     def analyze_image(self, path):
@@ -41,8 +41,7 @@ class DeepfakeDetector:
             return {"error": "OpenCV not available"}, [], []
 
         cap = cv2.VideoCapture(path)
-        frames = []
-        scores = []
+        frames, scores = [], []
 
         face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
@@ -56,16 +55,15 @@ class DeepfakeDetector:
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-            # Face detection
             faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-            for (x, y, w, h) in faces:
-                cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+            for (x,y,w,h) in faces:
+                cv2.rectangle(frame,(x,y),(x+w,y+h),(255,0,0),2)
 
             score = self._compute(gray)
-            scores.append(int(score * 100))
+            scores.append(int(score*100))
 
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append({"image": frame_rgb, "score": int(score * 100)})
+            frames.append({"image": frame_rgb, "score": int(score*100)})
 
             count += 1
 
@@ -81,9 +79,15 @@ class DeepfakeDetector:
 
     def _build(self, score):
         score = int(score * 100)
+
+        if score >= 60:
+            verdict = "REAL ✅"
+        else:
+            verdict = "FAKE 🚨"
+
         return {
             "score": score,
-            "verdict": "Authentic" if score >= 70 else "Suspicious" if score >= 40 else "Deepfake",
+            "verdict": verdict,
             "confidence": abs(score - 50) * 2
         }
 
@@ -92,12 +96,19 @@ def file_hash(data):
     return hashlib.sha256(data).hexdigest()
 
 def explain(score):
-    if score >= 70:
+    if score >= 60:
         return ["Natural texture", "Consistent lighting", "Low noise"]
-    elif score >= 40:
-        return ["Minor artifacts", "Slight blur", "Moderate noise"]
     else:
         return ["GAN artifacts", "Unnatural smoothing", "High noise"]
+
+def download_report(result, hash_val):
+    return f"""
+DEEPTRUST REPORT
+Score: {result['score']}
+Verdict: {result['verdict']}
+Confidence: {result['confidence']}%
+Hash: {hash_val}
+"""
 
 # ─── App ───
 detector = DeepfakeDetector()
@@ -111,18 +122,23 @@ if mode == "Upload":
     if uploaded:
         data = uploaded.read()
 
-        st.subheader("Preview")
+        col1, col2 = st.columns([2,1])
 
-        if uploaded.type.startswith("image"):
-            img = Image.open(BytesIO(data))
-            st.image(img)
+        with col1:
+            st.subheader("Preview")
+            if uploaded.type.startswith("image"):
+                st.image(Image.open(BytesIO(data)))
+            else:
+                with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                    tmp.write(data)
+                    st.video(tmp.name)
 
-        else:
-            with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                tmp.write(data)
-                st.video(tmp.name)
+        with col2:
+            st.subheader("File Info")
+            st.write(uploaded.name)
+            st.write(f"{uploaded.size/1024:.2f} KB")
 
-        if st.button("Analyze 🚀"):
+        if st.button("Analyze 🚀", use_container_width=True):
 
             with tempfile.NamedTemporaryFile(delete=False) as tmp:
                 tmp.write(data)
@@ -139,17 +155,16 @@ if mode == "Upload":
 
             score = result["score"]
 
-            st.markdown("## Result")
+            st.markdown("## 🔎 Result")
+            st.subheader(f"Final Verdict: {result['verdict']}")
 
-            if score >= 70:
-                st.success(f"✅ Authentic ({score})")
-            elif score >= 40:
-                st.warning(f"⚠️ Suspicious ({score})")
+            if result["verdict"] == "REAL ✅":
+                st.success(f"REAL ({score})")
             else:
-                st.error(f"🚨 Deepfake ({score})")
+                st.error(f"FAKE ({score})")
 
-            st.progress(score / 100)
-            st.write(f"Confidence: {result['confidence']}%")
+            st.progress(score/100)
+            st.metric("Confidence", f"{result['confidence']}%")
 
             # Explanation
             st.markdown("### 🧠 Explanation")
@@ -159,9 +174,9 @@ if mode == "Upload":
             # Frames
             if frames:
                 st.markdown("### 🎬 Frame Analysis")
-                cols = st.columns(4)
+                cols = st.columns(5)
                 for i, f in enumerate(frames):
-                    with cols[i % 4]:
+                    with cols[i % 5]:
                         st.image(f["image"], caption=f"{f['score']}")
 
             # Graph
@@ -173,8 +188,16 @@ if mode == "Upload":
                 st.pyplot(fig)
 
             # Hash
+            hash_val = file_hash(data)
             st.markdown("### 🔐 File Hash")
-            st.code(file_hash(data))
+            st.code(hash_val)
+
+            # Download
+            st.download_button(
+                "📄 Download Report",
+                download_report(result, hash_val),
+                file_name="deeptrust_report.txt"
+            )
 
 # ─── URL Mode ───
 elif mode == "URL":
