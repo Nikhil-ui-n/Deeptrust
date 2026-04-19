@@ -4,25 +4,31 @@ from PIL import Image
 import hashlib
 import tempfile
 from io import BytesIO
-import matplotlib.pyplot as plt
 import requests
 
-# Safe OpenCV import
+# Safe imports
 try:
     import cv2
     CV2 = True
 except:
     CV2 = False
 
-st.set_page_config(page_title="DeepTrust", layout="wide")
-st.title("🔍 DeepTrust - AI Deepfake Detector")
+try:
+    import matplotlib.pyplot as plt
+    MPL = True
+except:
+    MPL = False
 
-# ─── Detector ───────────────────────
+# ─── Page Config ───
+st.set_page_config(page_title="DeepTrust", layout="wide")
+st.title("🔍 DeepTrust - Deepfake Detector")
+
+# ─── Detector Class ───
 class DeepfakeDetector:
 
     def analyze_image(self, path):
         if not CV2:
-            return {"error": "OpenCV not installed"}, [], []
+            return {"error": "OpenCV not available"}, [], []
 
         img = cv2.imread(path)
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -32,7 +38,7 @@ class DeepfakeDetector:
 
     def analyze_video(self, path):
         if not CV2:
-            return {"error": "OpenCV not installed"}, [], []
+            return {"error": "OpenCV not available"}, [], []
 
         cap = cv2.VideoCapture(path)
         frames = []
@@ -43,7 +49,7 @@ class DeepfakeDetector:
         )
 
         count = 0
-        while count < 12:
+        while count < 10:
             ret, frame = cap.read()
             if not ret:
                 break
@@ -59,11 +65,7 @@ class DeepfakeDetector:
             scores.append(int(score * 100))
 
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-            frames.append({
-                "image": frame_rgb,
-                "score": int(score * 100)
-            })
+            frames.append({"image": frame_rgb, "score": int(score * 100)})
 
             count += 1
 
@@ -85,8 +87,7 @@ class DeepfakeDetector:
             "confidence": abs(score - 50) * 2
         }
 
-
-# ─── Utils ──────────────────────────
+# ─── Utils ───
 def file_hash(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -98,13 +99,12 @@ def explain(score):
     else:
         return ["GAN artifacts", "Unnatural smoothing", "High noise"]
 
-
-# ─── App ────────────────────────────
+# ─── App ───
 detector = DeepfakeDetector()
 
 mode = st.sidebar.radio("Mode", ["Upload", "URL"])
 
-# ─── Upload Mode ────────────────────
+# ─── Upload Mode ───
 if mode == "Upload":
     uploaded = st.file_uploader("Upload Image/Video", type=["jpg","png","jpeg","mp4"])
 
@@ -120,8 +120,7 @@ if mode == "Upload":
         else:
             with tempfile.NamedTemporaryFile(delete=False) as tmp:
                 tmp.write(data)
-                video_path = tmp.name
-            st.video(video_path)
+                st.video(tmp.name)
 
         if st.button("Analyze 🚀"):
 
@@ -134,9 +133,13 @@ if mode == "Upload":
             else:
                 result, frames, scores = detector.analyze_video(path)
 
-            st.markdown("## Result")
+            if "error" in result:
+                st.error(result["error"])
+                st.stop()
 
             score = result["score"]
+
+            st.markdown("## Result")
 
             if score >= 70:
                 st.success(f"✅ Authentic ({score})")
@@ -153,7 +156,7 @@ if mode == "Upload":
             for e in explain(score):
                 st.write(f"- {e}")
 
-            # Frame visualization
+            # Frames
             if frames:
                 st.markdown("### 🎬 Frame Analysis")
                 cols = st.columns(4)
@@ -162,7 +165,7 @@ if mode == "Upload":
                         st.image(f["image"], caption=f"{f['score']}")
 
             # Graph
-            if scores:
+            if scores and MPL:
                 st.markdown("### 📊 Confidence Graph")
                 fig, ax = plt.subplots()
                 ax.plot(scores)
@@ -173,19 +176,22 @@ if mode == "Upload":
             st.markdown("### 🔐 File Hash")
             st.code(file_hash(data))
 
-
-# ─── URL Mode ───────────────────────
+# ─── URL Mode ───
 elif mode == "URL":
     url = st.text_input("Enter Image URL")
 
     if url:
-        response = requests.get(url)
-        img = Image.open(BytesIO(response.content))
-        st.image(img)
+        try:
+            response = requests.get(url)
+            img = Image.open(BytesIO(response.content))
+            st.image(img)
 
-        if st.button("Analyze URL 🚀"):
-            with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                img.save(tmp.name)
-                result, _, _ = detector.analyze_image(tmp.name)
+            if st.button("Analyze URL 🚀"):
+                with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                    img.save(tmp.name)
+                    result, _, _ = detector.analyze_image(tmp.name)
 
-            st.write(result)
+                st.write(result)
+
+        except:
+            st.error("Invalid URL")
