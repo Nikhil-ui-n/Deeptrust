@@ -52,22 +52,30 @@ class DeepfakeDetector:
 
         return self._build_result(np.mean(scores))
 
-    # 🔥 Simple heuristic scoring
+    # 🔥 FIXED scoring (no reverse issue)
     def _score(self, img):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        variance = np.var(gray)
 
-        # normalize score (0–1)
-        return min(1.0, variance / 5000)
+        # Texture analysis
+        laplacian = cv2.Laplacian(gray, cv2.CV_64F)
+        variance = laplacian.var()
 
-    # ✅ Final verdict logic
+        # Normalize
+        norm_var = min(1.0, variance / 1000)
+
+        # ✅ FIX: invert logic
+        authenticity = 1.0 - norm_var
+
+        return authenticity
+
+    # ✅ Final verdict
     def _build_result(self, score):
         score = int(score * 100)
 
-        if score >= 70:
+        if score >= 60:
             label = "REAL"
             emoji = "✅"
-        elif score >= 40:
+        elif score >= 35:
             label = "UNCERTAIN"
             emoji = "⚠️"
         else:
