@@ -19,11 +19,10 @@ try:
 except:
     MPL = False
 
-# ─── Page Config ───
 st.set_page_config(page_title="DeepTrust", layout="wide")
-st.title("🔍 DeepTrust - Deepfake Detector")
+st.title("🔍 DeepTrust - Advanced Deepfake Detector")
 
-# ─── Detector ───
+# ─── Detector ───────────────────────
 class DeepfakeDetector:
 
     def analyze_image(self, path):
@@ -60,10 +59,10 @@ class DeepfakeDetector:
                 cv2.rectangle(frame,(x,y),(x+w,y+h),(255,0,0),2)
 
             score = self._compute(gray)
-            scores.append(int(score*100))
+            scores.append(int(score * 100))
 
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append({"image": frame_rgb, "score": int(score*100)})
+            frames.append({"image": frame_rgb, "score": int(score * 100)})
 
             count += 1
 
@@ -72,16 +71,25 @@ class DeepfakeDetector:
         final_score = np.mean(scores)/100 if scores else 0.5
         return self._build(final_score), frames, scores
 
+    # 🔥 Improved scoring
     def _compute(self, gray):
         variance = np.var(gray)
         noise = np.std(gray)
-        return min(1.0, (variance + noise) / 6000)
 
+        edges = cv2.Canny(gray, 100, 200)
+        edge_density = np.mean(edges)
+
+        score = (variance*0.4 + noise*0.3 + edge_density*0.3) / 7000
+        return min(1.0, score)
+
+    # 🔥 Better classification
     def _build(self, score):
         score = int(score * 100)
 
-        if score >= 60:
+        if score >= 75:
             verdict = "REAL ✅"
+        elif score >= 50:
+            verdict = "SUSPICIOUS ⚠️"
         else:
             verdict = "FAKE 🚨"
 
@@ -91,17 +99,19 @@ class DeepfakeDetector:
             "confidence": abs(score - 50) * 2
         }
 
-# ─── Utils ───
+# ─── Utils ─────────────────────────
 def file_hash(data):
     return hashlib.sha256(data).hexdigest()
 
 def explain(score):
-    if score >= 60:
-        return ["Natural texture", "Consistent lighting", "Low noise"]
+    if score >= 75:
+        return ["Natural texture", "Consistent lighting", "Balanced edges"]
+    elif score >= 50:
+        return ["Minor inconsistencies", "Possible smoothing", "Edge irregularities"]
     else:
-        return ["GAN artifacts", "Unnatural smoothing", "High noise"]
+        return ["Strong GAN artifacts", "Unnatural smoothing", "Abnormal edges"]
 
-def download_report(result, hash_val):
+def report(result, hash_val):
     return f"""
 DEEPTRUST REPORT
 Score: {result['score']}
@@ -110,7 +120,7 @@ Confidence: {result['confidence']}%
 Hash: {hash_val}
 """
 
-# ─── App ───
+# ─── App ───────────────────────────
 detector = DeepfakeDetector()
 
 mode = st.sidebar.radio("Mode", ["Upload", "URL"])
@@ -158,13 +168,19 @@ if mode == "Upload":
             st.markdown("## 🔎 Result")
             st.subheader(f"Final Verdict: {result['verdict']}")
 
-            if result["verdict"] == "REAL ✅":
-                st.success(f"REAL ({score})")
+            if "REAL" in result["verdict"]:
+                st.success(f"{result['verdict']} ({score})")
+            elif "SUSPICIOUS" in result["verdict"]:
+                st.warning(f"{result['verdict']} ({score})")
             else:
-                st.error(f"FAKE ({score})")
+                st.error(f"{result['verdict']} ({score})")
 
             st.progress(score/100)
             st.metric("Confidence", f"{result['confidence']}%")
+
+            # ⚠️ Low confidence warning
+            if result["confidence"] < 50:
+                st.warning("⚠️ Low confidence result — may be inaccurate")
 
             # Explanation
             st.markdown("### 🧠 Explanation")
@@ -192,10 +208,10 @@ if mode == "Upload":
             st.markdown("### 🔐 File Hash")
             st.code(hash_val)
 
-            # Download
+            # Download report
             st.download_button(
                 "📄 Download Report",
-                download_report(result, hash_val),
+                report(result, hash_val),
                 file_name="deeptrust_report.txt"
             )
 
