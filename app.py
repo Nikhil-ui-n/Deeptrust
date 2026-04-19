@@ -1,132 +1,191 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
+import hashlib
 import tempfile
 from io import BytesIO
-import hashlib
+import matplotlib.pyplot as plt
+import requests
 
-# 🔥 REAL AI MODEL (Transformers)
-from transformers import pipeline
+# Safe OpenCV import
+try:
+    import cv2
+    CV2 = True
+except:
+    CV2 = False
 
-# Load model once
-@st.cache_resource
-def load_model():
-    return pipeline(
-        "image-classification",
-        model="nateraw/deepfake-detection-model"  # lightweight demo model
-    )
+st.set_page_config(page_title="DeepTrust", layout="wide")
+st.title("🔍 DeepTrust - AI Deepfake Detector")
 
-detector_model = load_model()
+# ─── Detector ───────────────────────
+class DeepfakeDetector:
 
-# ─── UI ─────────────────────────────
-st.set_page_config(page_title="DeepTrust AI", page_icon="🔍", layout="wide")
+    def analyze_image(self, path):
+        if not CV2:
+            return {"error": "OpenCV not installed"}, [], []
 
-st.title("🔍 DeepTrust (Real AI Model)")
-st.subheader("Deepfake Detection using AI Model")
+        img = cv2.imread(path)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        score = self._compute(gray)
+        return self._build(score), [], []
+
+    def analyze_video(self, path):
+        if not CV2:
+            return {"error": "OpenCV not installed"}, [], []
+
+        cap = cv2.VideoCapture(path)
+        frames = []
+        scores = []
+
+        face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+
+        count = 0
+        while count < 12:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # Face detection
+            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+            for (x, y, w, h) in faces:
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+
+            score = self._compute(gray)
+            scores.append(int(score * 100))
+
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            frames.append({
+                "image": frame_rgb,
+                "score": int(score * 100)
+            })
+
+            count += 1
+
+        cap.release()
+
+        final_score = np.mean(scores)/100 if scores else 0.5
+        return self._build(final_score), frames, scores
+
+    def _compute(self, gray):
+        variance = np.var(gray)
+        noise = np.std(gray)
+        return min(1.0, (variance + noise) / 6000)
+
+    def _build(self, score):
+        score = int(score * 100)
+        return {
+            "score": score,
+            "verdict": "Authentic" if score >= 70 else "Suspicious" if score >= 40 else "Deepfake",
+            "confidence": abs(score - 50) * 2
+        }
+
 
 # ─── Utils ──────────────────────────
 def file_hash(data):
     return hashlib.sha256(data).hexdigest()
 
-
-def analyze_image(image):
-    results = detector_model(image)
-
-    # Example output:
-    # [{'label': 'FAKE', 'score': 0.92}]
-
-    label = results[0]["label"].upper()
-    confidence = int(results[0]["score"] * 100)
-
-    return label, confidence
-
-
-def analyze_video(path):
-    import cv2
-
-    cap = cv2.VideoCapture(path)
-    preds = []
-
-    for _ in range(8):  # sample frames
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(frame)
-
-        result = detector_model(img)[0]
-        preds.append(result)
-
-    cap.release()
-
-    if not preds:
-        return "UNCERTAIN", 0
-
-    # average prediction
-    fake_scores = [
-        p["score"] for p in preds if "fake" in p["label"].lower()
-    ]
-
-    real_scores = [
-        p["score"] for p in preds if "real" in p["label"].lower()
-    ]
-
-    avg_fake = np.mean(fake_scores) if fake_scores else 0
-    avg_real = np.mean(real_scores) if real_scores else 0
-
-    if avg_fake > avg_real:
-        return "AI GENERATED", int(avg_fake * 100)
+def explain(score):
+    if score >= 70:
+        return ["Natural texture", "Consistent lighting", "Low noise"]
+    elif score >= 40:
+        return ["Minor artifacts", "Slight blur", "Moderate noise"]
     else:
-        return "REAL", int(avg_real * 100)
-
-
-def show_result(label, confidence):
-    st.markdown("## 🔍 Final Verdict")
-
-    if "REAL" in label:
-        st.success(f"✅ REAL ({confidence}%)")
-    elif "FAKE" in label or "AI" in label:
-        st.error(f"🚨 AI GENERATED ({confidence}%)")
-    else:
-        st.warning(f"⚠️ UNCERTAIN ({confidence}%)")
+        return ["GAN artifacts", "Unnatural smoothing", "High noise"]
 
 
 # ─── App ────────────────────────────
-uploaded = st.file_uploader(
-    "Upload Image or Video",
-    type=["jpg", "jpeg", "png", "mp4"]
-)
+detector = DeepfakeDetector()
 
-if uploaded:
-    data = uploaded.read()
+mode = st.sidebar.radio("Mode", ["Upload", "URL"])
 
-    st.markdown("### 👀 Preview")
+# ─── Upload Mode ────────────────────
+if mode == "Upload":
+    uploaded = st.file_uploader("Upload Image/Video", type=["jpg","png","jpeg","mp4"])
 
-    if uploaded.type.startswith("image"):
-        img = Image.open(BytesIO(data)).convert("RGB")
-        st.image(img)
+    if uploaded:
+        data = uploaded.read()
 
-    else:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(data)
-            st.video(tmp.name)
+        st.subheader("Preview")
 
-    if st.button("🚀 Analyze with AI"):
-        with st.spinner("Running AI model..."):
+        if uploaded.type.startswith("image"):
+            img = Image.open(BytesIO(data))
+            st.image(img)
+
+        else:
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp.write(data)
+                video_path = tmp.name
+            st.video(video_path)
+
+        if st.button("Analyze 🚀"):
+
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp.write(data)
+                path = tmp.name
 
             if uploaded.type.startswith("image"):
-                img = Image.open(BytesIO(data)).convert("RGB")
-                label, confidence = analyze_image(img)
-
+                result, frames, scores = detector.analyze_image(path)
             else:
-                with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                    tmp.write(data)
-                    path = tmp.name
+                result, frames, scores = detector.analyze_video(path)
 
-                label, confidence = analyze_video(path)
+            st.markdown("## Result")
 
-        show_result(label, confidence)
+            score = result["score"]
 
-        st.markdown("### 🔐 File Hash")
-        st.code(file_hash(data))
+            if score >= 70:
+                st.success(f"✅ Authentic ({score})")
+            elif score >= 40:
+                st.warning(f"⚠️ Suspicious ({score})")
+            else:
+                st.error(f"🚨 Deepfake ({score})")
+
+            st.progress(score / 100)
+            st.write(f"Confidence: {result['confidence']}%")
+
+            # Explanation
+            st.markdown("### 🧠 Explanation")
+            for e in explain(score):
+                st.write(f"- {e}")
+
+            # Frame visualization
+            if frames:
+                st.markdown("### 🎬 Frame Analysis")
+                cols = st.columns(4)
+                for i, f in enumerate(frames):
+                    with cols[i % 4]:
+                        st.image(f["image"], caption=f"{f['score']}")
+
+            # Graph
+            if scores:
+                st.markdown("### 📊 Confidence Graph")
+                fig, ax = plt.subplots()
+                ax.plot(scores)
+                ax.set_title("Frame Scores")
+                st.pyplot(fig)
+
+            # Hash
+            st.markdown("### 🔐 File Hash")
+            st.code(file_hash(data))
+
+
+# ─── URL Mode ───────────────────────
+elif mode == "URL":
+    url = st.text_input("Enter Image URL")
+
+    if url:
+        response = requests.get(url)
+        img = Image.open(BytesIO(response.content))
+        st.image(img)
+
+        if st.button("Analyze URL 🚀"):
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                img.save(tmp.name)
+                result, _, _ = detector.analyze_image(tmp.name)
+
+            st.write(result)
